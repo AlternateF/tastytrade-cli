@@ -17,9 +17,8 @@ from tastytrade.instruments import (
     NestedOptionChainExpiration,
     Option as TastytradeOption,
 )
-from tastytrade.market_data import get_market_data, get_market_data_by_type
+from tastytrade.market_data import get_market_data_by_type
 from tastytrade.order import (
-    InstrumentType,
     NewOrder,
     OrderAction,
     OrderTimeInForce,
@@ -217,13 +216,15 @@ async def call(
         bid = data_dict[strike_symbol].bid - data_dict[spread_strike.call].ask  # type: ignore
         ask = data_dict[strike_symbol].ask - data_dict[spread_strike.call].bid  # type: ignore
     else:
-        data = get_market_data(
+        dxfeeds = [strike_symbol]
+        data = get_market_data_by_type(
             sesh,
-            strike_symbol,
-            InstrumentType.FUTURE_OPTION if is_future else InstrumentType.EQUITY_OPTION,
+            options=dxfeeds if not is_future else None,
+            future_options=dxfeeds if is_future else None,
         )
-        bid = data.bid or 0
-        ask = data.ask or 0
+        data_dict = {d.symbol: d for d in data}
+        bid = data_dict[strike_symbol].bid or 0
+        ask = data_dict[strike_symbol].bid or 0
     mid = fmt((bid + ask) / Decimal(2))
     console = Console()
     if width:
@@ -453,13 +454,15 @@ async def put(
         bid = data_dict[strike_symbol].bid - data_dict[spread_strike.call].ask  # type: ignore
         ask = data_dict[strike_symbol].ask - data_dict[spread_strike.call].bid  # type: ignore
     else:
-        data = get_market_data(
+        dxfeeds = [strike_symbol]
+        data = get_market_data_by_type(
             sesh,
-            strike_symbol,
-            InstrumentType.FUTURE_OPTION if is_future else InstrumentType.EQUITY_OPTION,
+            options=dxfeeds if not is_future else None,
+            future_options=dxfeeds if is_future else None,
         )
-        bid = data.bid or 0
-        ask = data.ask or 0
+        data_dict = {d.symbol: d for d in data}
+        bid = data_dict[strike_symbol].bid or 0
+        ask = data_dict[strike_symbol].bid or 0
     mid = fmt((bid + ask) / Decimal(2))
     console = Console()
     if width:
