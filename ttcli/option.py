@@ -960,6 +960,8 @@ async def chain(
         "option.chain", "show-open-interest", fallback=False
     )
     show_volume = sesh.config.getboolean("option.chain", "show-volume", fallback=False)
+
+    table.add_column("IV", justify="right")
     if show_volume:
         table.add_column("Volume", justify="right")
     if show_oi:
@@ -981,6 +983,7 @@ async def chain(
         table.add_column("Open Int", justify="right")
     if show_volume:
         table.add_column("Volume", justify="right")
+    table.add_column("IV", justify="right")
 
     with yaspin(color="green", text="Fetching quotes..."):
         async with DXLinkStreamer(sesh) as streamer:
@@ -1064,6 +1067,9 @@ async def chain(
         if show_volume:
             prepend.append(f"{trade_dict[strike.call_streamer_symbol].day_volume}")  # type: ignore
             row.append(f"{trade_dict[strike.put_streamer_symbol].day_volume}")  # type: ignore
+
+        prepend.append(f"{greeks_dict[strike.call_streamer_symbol].volatility:.2f}")
+        row.append(f"{greeks_dict[strike.put_streamer_symbol].volatility:.2f}")
 
         prepend.reverse()
         table.add_row(*(prepend + row), end_section=(i == mid_index - 1))
