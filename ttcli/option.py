@@ -1080,12 +1080,10 @@ async def chain(
 @option.command(help="Fetch and display the IV term_structure", no_args_is_help=True)
 async def term_structure(
     symbol: str,
-    strikes: Annotated[
-        int | None, Option("--strikes", "-s", help="The number of strikes to fetch.")
+    expiration_nb: Annotated[
+        int | None,
+        Option("--expiration_nb", "-n", help="The number of expiration to fetch."),
     ] = None,
-    weeklies: Annotated[
-        bool, Option("--weeklies", help="Show all expirations, not just monthlies.")
-    ] = False,
     dte: Annotated[
         int | None, Option("--dte", help="Days to expiration for the chain.")
     ] = None,
@@ -1095,8 +1093,9 @@ async def term_structure(
 
     if dte is None:
         dte = sesh.config.getint("option", "default-dte", fallback=None)
-    if strikes is None:
-        strikes = sesh.config.getint("option", "strike-count", fallback=16)
+    strikes = 2
+    if expiration_nb is None:
+        expiration_nb = 8
     is_future = symbol[0] == "/"
     if is_future:  # futures options
         chain = NestedFutureOptionChain.get(sesh, symbol)
@@ -1115,77 +1114,78 @@ async def term_structure(
         show_header=True,
         header_style="bold",
         title_style="bold",
-        title=f"Options chain for {symbol} expiring {exps[0].expiration_date}",
+        title=f"Options term structure for {symbol} until {exps[expiration_nb-1].expiration_date}",
     )
 
     show_delta = sesh.config.getboolean("option.chain", "show-delta", fallback=True)
     show_theta = sesh.config.getboolean("option.chain", "show-theta", fallback=False)
 
-    table.add_column("IV", justify="right")
+    table.add_column("IV %", justify="right")
     table.add_column("Exp Date", justify="right")
     if show_theta:
         table.add_column("Call \u03b8", justify="center")
     if show_delta:
         table.add_column("Call \u0394", justify="center")
-    table.add_column("Bid", style="green", justify="right")
-    table.add_column("Ask", style="red", justify="right")
+    table.add_column("Price", style="blue", justify="right")
     table.add_column("Strike", justify="center")
 
     with yaspin(color="green", text="Fetching quotes..."):
-            for subchain in exps:
-                async with DXLinkStreamer(sesh) as streamer:
-                    if is_future:  # futures options
-                        future = Future.get(sesh, subchain.underlying_symbol)  # type: ignore
-                        await streamer.subscribe(Trade, [future.streamer_symbol])
-                    if not is_future:
-                        await streamer.subscribe(Trade, [symbol])
+        for subchain in exps[0:expiration_nb]:
+            async with DXLinkStreamer(sesh) as streamer:
+                if is_future:  # futures options
+                    future = Future.get(sesh, subchain.underlying_symbol)  # type: ignore
+                    await streamer.subscribe(Trade, [future.streamer_symbol])
+                if not is_future:
+                    await streamer.subscribe(Trade, [symbol])
 
-                    trade = await streamer.get_event(Trade)
+                trade = await streamer.get_event(Trade)
 
-                    subchain.strikes.sort(key=lambda s: s.strike_price)
-                    mid_index = 0
-                    if strikes < len(subchain.strikes):
-                        while subchain.strikes[mid_index].strike_price < trade.price:
-                            mid_index += 1
-                        half = strikes // 2
-                        all_strikes = subchain.strikes[mid_index - half : mid_index + half]
-                    else:
-                        all_strikes = subchain.strikes
-                    mid_index = 0
-                    while all_strikes[mid_index].strike_price < trade.price:
+                subchain.strikes.sort(key=lambda s: s.strike_price)
+                mid_index = 0
+                if strikes < len(subchain.strikes):
+                    while subchain.strikes[mid_index].strike_price < trade.price:
                         mid_index += 1
+                    half = strikes // 2
+                    all_strikes = subchain.strikes[mid_index - half : mid_index + half]
+                else:
+                    all_strikes = subchain.strikes
+                mid_index = 0
+                while all_strikes[mid_index].strike_price < trade.price:
+                    mid_index += 1
 
-                    dxfeeds = [s.call_streamer_symbol for s in all_strikes]
+                dxfeeds = [s.call_streamer_symbol for s in all_strikes]
 
-                    greeks_task = asyncio.create_task(listen_events(dxfeeds, Greeks, streamer))
-                    quote_task = asyncio.create_task(listen_events(dxfeeds, Quote, streamer))
-                    tasks = [greeks_task, quote_task]
-                    await asyncio.gather(*tasks)  # wait for all tasks
-                    greeks_dict = greeks_task.result()
-                    quote_dict = quote_task.result()
+                greeks_task = asyncio.create_task(
+                    listen_events(dxfeeds, Greeks, streamer)
+                )
+                await greeks_task
+                greeks_dict = greeks_task.result()
 
-                for i, strike in enumerate(all_strikes):
-                    call_bid = quote_dict[strike.call_streamer_symbol].bid_price
-                    call_ask = quote_dict[strike.call_streamer_symbol].ask_price
-                    row = [
-                        f"{fmt(call_bid)}",
-                        f"{fmt(call_ask)}",
-                        f"{fmt(strike.strike_price)}",
-                    ]
-                    prepend = []
-                    if show_delta:
-                        call_delta = int(greeks_dict[strike.call_streamer_symbol].delta * 100)
-                        prepend.append(f"{call_delta:g}")
-
-                    if show_theta:
-                        prepend.append(f"{abs(greeks_dict[strike.call_streamer_symbol].theta):.2f}")
-                    prepend.append(
-                        f"{subchain.expiration_date}"  # type: ignore
+            for _, strike in enumerate(all_strikes):
+                row = [
+                    f"{fmt(greeks_dict[strike.call_streamer_symbol].price)}",
+                    f"{fmt(strike.strike_price)}",
+                ]
+                prepend = []
+                if show_delta:
+                    call_delta = int(
+                        greeks_dict[strike.call_streamer_symbol].delta * 100
                     )
+                    prepend.append(f"{call_delta:g}")
 
-                    prepend.append(f"{greeks_dict[strike.call_streamer_symbol].volatility:.2f}")
+                if show_theta:
+                    prepend.append(
+                        f"{abs(greeks_dict[strike.call_streamer_symbol].theta):.2f}"
+                    )
+                prepend.append(
+                    f"{subchain.expiration_date}"  # type: ignore
+                )
 
-                    prepend.reverse()
-                    table.add_row(*(prepend + row))
+                prepend.append(
+                    f"{greeks_dict[strike.call_streamer_symbol].volatility*100:.2f}"
+                )
 
-                console.print(table)
+                prepend.reverse()
+                table.add_row(*(prepend + row))
+
+        console.print(table)
