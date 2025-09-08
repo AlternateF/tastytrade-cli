@@ -1114,23 +1114,25 @@ async def term_structure(
         show_header=True,
         header_style="bold",
         title_style="bold",
-        title=f"Options term structure for {symbol} until {exps[expiration_nb-1].expiration_date}",
+        title=f"Options term structure for {symbol} until {exps[min(len(exps), expiration_nb)-1].expiration_date}",
     )
 
-    show_delta = sesh.config.getboolean("option.chain", "show-delta", fallback=True)
     show_theta = sesh.config.getboolean("option.chain", "show-theta", fallback=False)
 
     table.add_column("IV %", justify="right")
     table.add_column("Exp Date", justify="right")
     if show_theta:
         table.add_column("Call \u03b8", justify="center")
-    if show_delta:
-        table.add_column("Call \u0394", justify="center")
+    table.add_column("Call \u0394", justify="center")
     table.add_column("Price", style="blue", justify="right")
     table.add_column("Strike", justify="center")
 
     with yaspin(color="green", text="Fetching quotes..."):
+        expiration_date_already_in_table = set()
+
         for subchain in exps[0:expiration_nb]:
+            if subchain.expiration_date in expiration_date_already_in_table:
+                continue
             async with DXLinkStreamer(sesh) as streamer:
                 if is_future:  # futures options
                     future = Future.get(sesh, subchain.underlying_symbol)  # type: ignore
@@ -1142,7 +1144,7 @@ async def term_structure(
 
                 subchain.strikes.sort(key=lambda s: s.strike_price)
                 mid_index = 0
-                if strikes < len(subchain.strikes):
+                if strikes < len(subchain.strikes): # strikes = 2
                     while subchain.strikes[mid_index].strike_price < trade.price:
                         mid_index += 1
                     half = strikes // 2
@@ -1162,16 +1164,20 @@ async def term_structure(
                 greeks_dict = greeks_task.result()
 
             for _, strike in enumerate(all_strikes):
+                call_delta = int(
+                    greeks_dict[strike.call_streamer_symbol].delta * 100
+                )
+                if call_delta > 50:
+                    continue
+                expiration_date_already_in_table.add(subchain.expiration_date)
+
                 row = [
                     f"{fmt(greeks_dict[strike.call_streamer_symbol].price)}",
                     f"{fmt(strike.strike_price)}",
                 ]
                 prepend = []
-                if show_delta:
-                    call_delta = int(
-                        greeks_dict[strike.call_streamer_symbol].delta * 100
-                    )
-                    prepend.append(f"{call_delta:g}")
+
+                prepend.append(f"{call_delta:g}")
 
                 if show_theta:
                     prepend.append(
