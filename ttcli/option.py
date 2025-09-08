@@ -1167,7 +1167,7 @@ async def term_structure(
                 call_delta = int(
                     greeks_dict[strike.call_streamer_symbol].delta * 100
                 )
-                if call_delta > 50:
+                if call_delta > 50 or subchain.expiration_date in expiration_date_already_in_table:
                     continue
                 expiration_date_already_in_table.add(subchain.expiration_date)
 
